@@ -24,6 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from pymammotion.data.model.device import MowingDevice, RTKDevice
 from pymammotion.data.model.enums import RTKStatus
 from pymammotion.utility.constant.device_constant import (
@@ -316,13 +317,6 @@ SENSOR_TYPES: tuple[MammotionSensorEntityDescription, ...] = (
         & 255,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    # MammotionSensorEntityDescription(
-    #     key="vlsam_status",
-    #     state_class=SensorStateClass.MEASUREMENT,
-    #     device_class=None,
-    #     native_unit_of_measurement=None,
-    #     value_fn=lambda mower_data: (mower_data.report_data.dev.vslam_status & 65280) >> 8,
-    # ),
     MammotionSensorEntityDescription(
         key="activity_mode",
         state_class=None,
@@ -362,20 +356,6 @@ SENSOR_TYPES: tuple[MammotionSensorEntityDescription, ...] = (
         value_fn=lambda mower_data: mower_data.location.RTK.longitude * 180.0 / math.pi,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
-    # MammotionSensorEntityDescription(
-    #     key="lawn_mower_position",
-    #     state_class=None,
-    #     device_class=None,  # Set device class to "geo_location"
-    #     native_unit_of_measurement=None,
-    #     value_fn=lambda mower_data: f"{mower_data.location.device.latitude}, {mower_data.location.device.longitude}"
-    # )
-    # ToDo: We still need to add the following.
-    # - RTK Status - None, Single, Fix, Float, Unknown (RTKStatusFragment.java)
-    # - Signal quality (Robot)
-    # - Signal quality (Ref. Station)
-    # - LoRa number
-    # - WiFi status
-    # 'real_pos_x': -142511, 'real_pos_y': -20548, 'real_toward': 50915, (robot position)
 )
 
 SENSOR_ERROR_TYPES: tuple[MammotionErrorSensorEntityDescription, ...] = (
@@ -487,6 +467,11 @@ async def async_setup_entry(
             for description in SENSOR_ERROR_TYPES
         )
 
+        # Instantiate the new raw data sensor to expose mapping details
+        entities.append(
+            MammotionAllDataSensor(mower.reporting_coordinator, mower.device.device_name)
+        )
+
     mammotion_rtks = entry.runtime_data.RTK
     for rtk in mammotion_rtks:
         entities.extend(
@@ -582,3 +567,40 @@ class MammotionWorkSensorEntity(MammotionBaseEntity, SensorEntity):
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         return self.entity_description.value_fn(self.coordinator, self.coordinator.data)
+
+
+class MammotionAllDataSensor(CoordinatorEntity, SensorEntity):
+    """Sensor that exposes all raw Mammotion map and state data as attributes."""
+
+    def __init__(self, coordinator, device_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._device_name = device_name
+        self._attr_name = f"{device_name.replace('-', ' ')} All Data"
+        self._attr_unique_id = f"{device_name}_all_raw_data"
+
+    @property
+    def native_value(self):
+        """Return the basic state of the sensor."""
+        return "Data Available"
+
+    @property
+    def extra_state_attributes(self):
+        """Return all available map and mower data as attributes."""
+        if not self.coordinator.data:
+            return {}
+        
+        # If data is directly accessible via the dictionary
+        if isinstance(self.coordinator.data, dict):
+            if self._device_name in self.coordinator.data:
+                return self.coordinator.data[self._device_name]
+            return self.coordinator.data
+            
+        # If data is an object (such as MowingDevice class), serialize it to expose parameters safely
+        try:
+            import dataclasses
+            if dataclasses.is_dataclass(self.coordinator.data):
+                return dataclasses.asdict(self.coordinator.data)
+            return vars(self.coordinator.data)
+        except Exception:
+            return {"raw_data": str(self.coordinator.data)}
