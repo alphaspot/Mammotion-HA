@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import importlib
 import json
 from abc import abstractmethod
 from collections.abc import Mapping
@@ -11,6 +12,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import betterproto2
+import pydantic.dataclasses
 from homeassistant.components import bluetooth
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import HomeAssistant
@@ -73,6 +75,9 @@ from .const import (
     LOGGER,
     NO_REQUEST_MODES,
 )
+
+# Force the import early to prevent blocking the event loop later
+importlib.import_module("pydantic.dataclasses")
 
 if TYPE_CHECKING:
     from . import MammotionConfigEntry
